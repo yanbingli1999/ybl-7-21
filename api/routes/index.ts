@@ -3,6 +3,7 @@ import projectsRouter from './projects.js';
 import variablesRouter from './variables.js';
 import simulationsRouter from './simulations.js';
 import compareRouter from './compare.js';
+import healthRouter from './health.js';
 
 const router = Router();
 
@@ -10,5 +11,6 @@ router.use('/projects', projectsRouter);
 router.use('/variables', variablesRouter);
 router.use('/simulations', simulationsRouter);
 router.use('/compare', compareRouter);
+router.use('/health', healthRouter);
 
 export default router;

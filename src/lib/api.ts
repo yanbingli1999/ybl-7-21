@@ -1,7 +1,7 @@
 import type {
   Project, ProjectWithVariables, Variable, SimulationResult, CompareRecord,
   CreateProjectDto, UpdateProjectDto, CreateVariableDto, UpdateVariableDto,
-  RunSimulationDto, CreateCompareDto,
+  RunSimulationDto, CreateCompareDto, HealthScanResult, RepairRequest, RepairResult,
 } from '../../shared/types.js';
 
 const API_BASE = '/api';
@@ -46,5 +46,9 @@ export const api = {
     create: (projectId: string, dto: CreateCompareDto) =>
       request<CompareRecord>(`/compare/project/${projectId}`, { method: 'POST', body: JSON.stringify(dto) }),
     remove: (id: string) => request<{ success: boolean }>(`/compare/${id}`, { method: 'DELETE' }),
+  },
+  health: {
+    scan: () => request<HealthScanResult>('/health/scan'),
+    repair: (dto: RepairRequest) => request<RepairResult>('/health/repair', { method: 'POST', body: JSON.stringify(dto) }),
   },
 };

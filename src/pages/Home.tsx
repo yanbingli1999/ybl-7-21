@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Trash2, Play, FolderKanban, Activity, Calendar, X } from 'lucide-react';
+import { Plus, Trash2, Play, FolderKanban, Activity, Calendar, X, Database } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAppStore } from '@/store/useAppStore';
 import type { Project } from '../../shared/types.js';
@@ -89,19 +89,25 @@ export default function Home() {
                 通过蒙特卡洛模拟方法，量化项目的成本、工期和收益风险。可视化结果分布、识别关键变量、辅助科学决策。
               </p>
             </div>
-            <div className="flex gap-4">
-              <div className="card card-hover min-w-[120px] text-center">
-                <div className="text-3xl font-bold text-white font-mono">{projects.length}</div>
-                <div className="text-xs text-monte-muted mt-1">项目总数</div>
+            <div className="flex flex-col gap-4">
+              <div className="flex gap-4">
+                <div className="card card-hover min-w-[120px] text-center">
+                  <div className="text-3xl font-bold text-white font-mono">{projects.length}</div>
+                  <div className="text-xs text-monte-muted mt-1">项目总数</div>
+                </div>
+                <div className="card card-hover min-w-[120px] text-center">
+                  <div className="text-3xl font-bold text-monte-accent font-mono">{totalSims}</div>
+                  <div className="text-xs text-monte-muted mt-1">累计模拟</div>
+                </div>
+                <div className="card card-hover min-w-[120px] text-center">
+                  <div className="text-3xl font-bold text-monte-safe font-mono">{totalVars}</div>
+                  <div className="text-xs text-monte-muted mt-1">变量总数</div>
+                </div>
               </div>
-              <div className="card card-hover min-w-[120px] text-center">
-                <div className="text-3xl font-bold text-monte-accent font-mono">{totalSims}</div>
-                <div className="text-xs text-monte-muted mt-1">累计模拟</div>
-              </div>
-              <div className="card card-hover min-w-[120px] text-center">
-                <div className="text-3xl font-bold text-monte-safe font-mono">{totalVars}</div>
-                <div className="text-xs text-monte-muted mt-1">变量总数</div>
-              </div>
+              <Link to="/health" className="btn-secondary justify-center">
+                <Database className="w-4 h-4" />
+                数据健康检查
+              </Link>
             </div>
           </div>
         </div>

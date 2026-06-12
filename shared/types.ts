@@ -119,3 +119,64 @@ export interface CreateCompareDto {
   name: string;
   simulationIds: string[];
 }
+
+export type HealthIssueSeverity = 'warning' | 'error' | 'critical';
+export type HealthIssueType = 'orphan_variable' | 'missing_project' | 'abnormal_value' | 'oversized_file' | 'missing_simulation' | 'orphan_simulation' | 'orphan_compare';
+
+export interface HealthIssue {
+  id: string;
+  type: HealthIssueType;
+  severity: HealthIssueSeverity;
+  title: string;
+  description: string;
+  affectedType: 'variable' | 'project' | 'simulation' | 'compare' | 'file';
+  affectedId?: string;
+  affectedName?: string;
+  preview: Record<string, unknown>;
+  fixSuggestion: string;
+  canAutoFix: boolean;
+}
+
+export interface FileSizeInfo {
+  type: StoreType;
+  path: string;
+  sizeBytes: number;
+  sizeKB: number;
+  sizeMB: number;
+  count: number;
+}
+
+export type StoreType = 'projects' | 'variables' | 'simulations' | 'comparisons';
+
+export interface HealthScanResult {
+  scannedAt: string;
+  totalIssues: number;
+  issuesBySeverity: {
+    critical: number;
+    error: number;
+    warning: number;
+  };
+  issues: HealthIssue[];
+  fileSizes: FileSizeInfo[];
+  dataCounts: {
+    projects: number;
+    variables: number;
+    simulations: number;
+    comparisons: number;
+  };
+}
+
+export interface RepairRequest {
+  issueIds: string[];
+}
+
+export interface RepairResult {
+  success: boolean;
+  fixedCount: number;
+  failedCount: number;
+  results: Array<{
+    issueId: string;
+    success: boolean;
+    message: string;
+  }>;
+}
