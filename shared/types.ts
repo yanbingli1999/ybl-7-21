@@ -121,7 +121,7 @@ export interface CreateCompareDto {
 }
 
 export type HealthIssueSeverity = 'warning' | 'error' | 'critical';
-export type HealthIssueType = 'orphan_variable' | 'missing_project' | 'abnormal_value' | 'oversized_file' | 'missing_simulation' | 'orphan_simulation' | 'orphan_compare';
+export type HealthIssueType = 'orphan_variable' | 'missing_project' | 'abnormal_value' | 'oversized_file' | 'missing_simulation' | 'orphan_simulation' | 'orphan_compare' | 'corrupted_json';
 
 export interface HealthIssue {
   id: string;

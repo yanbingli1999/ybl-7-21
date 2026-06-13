@@ -16,8 +16,9 @@ const SEVERITY_CONFIG: Record<HealthIssueSeverity, { label: string; color: strin
 };
 
 const TYPE_CONFIG: Record<HealthIssueType, { label: string }> = {
-  orphan_variable: { label: '孤儿变量' },
+  corrupted_json: { label: 'JSON损坏' },
   missing_project: { label: '缺失项目' },
+  orphan_variable: { label: '孤儿变量' },
   abnormal_value: { label: '数值异常' },
   oversized_file: { label: '文件过大' },
   missing_simulation: { label: '缺失模拟' },

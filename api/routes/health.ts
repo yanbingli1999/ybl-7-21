@@ -1,8 +1,8 @@
 import { Router, Request, Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { v4 as uuidv4 } from 'uuid';
 import { createStore } from '../storage/fileStore.js';
 import type { Project, Variable, SimulationResult, CompareRecord, HealthIssue, HealthScanResult, FileSizeInfo, StoreType, RepairRequest, RepairResult } from '../../shared/types.js';
 
@@ -27,6 +27,11 @@ const FILES: Record<StoreType, string> = {
 const MAX_FILE_SIZE_MB = 10;
 const MAX_SIMULATION_SAMPLES = 100000;
 
+function stableId(...parts: string[]): string {
+  const raw = parts.join('::');
+  return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 24);
+}
+
 function getFileSizeInfo(type: StoreType, count: number): FileSizeInfo {
   const filePath = path.join(DATA_DIR, FILES[type]);
   let sizeBytes = 0;
@@ -44,6 +49,28 @@ function getFileSizeInfo(type: StoreType, count: number): FileSizeInfo {
   };
 }
 
+function checkFileCorruption(type: StoreType): { corrupted: boolean; error?: string; rawContent?: string } {
+  const filePath = path.join(DATA_DIR, FILES[type]);
+  if (!fs.existsSync(filePath)) {
+    return { corrupted: false };
+  }
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    JSON.parse(content);
+    return { corrupted: false };
+  } catch (err) {
+    let rawPreview = '';
+    try {
+      rawPreview = fs.readFileSync(filePath, 'utf-8').slice(0, 500);
+    } catch { /* ignore */ }
+    return {
+      corrupted: true,
+      error: err instanceof Error ? err.message : String(err),
+      rawContent: rawPreview,
+    };
+  }
+}
+
 function isAbnormalNumber(value: number): boolean {
   return (
     typeof value !== 'number' ||
@@ -55,10 +82,40 @@ function isAbnormalNumber(value: number): boolean {
 }
 
 function createIssue(partial: Omit<HealthIssue, 'id'>): HealthIssue {
+  const id = stableId(partial.type, partial.affectedId || partial.affectedType, String(partial.affectedName || ''));
   return {
-    id: uuidv4(),
+    id,
     ...partial,
   };
+}
+
+function scanCorruptedJson(): HealthIssue[] {
+  const issues: HealthIssue[] = [];
+  const storeTypes: StoreType[] = ['projects', 'variables', 'simulations', 'comparisons'];
+
+  for (const type of storeTypes) {
+    const result = checkFileCorruption(type);
+    if (result.corrupted) {
+      issues.push(createIssue({
+        type: 'corrupted_json',
+        severity: 'critical',
+        title: 'JSON 文件损坏',
+        description: `${FILES[type]} 文件无法解析，数据可能已损坏: ${result.error}`,
+        affectedType: 'file',
+        affectedId: type,
+        affectedName: FILES[type],
+        preview: {
+          type,
+          fileName: FILES[type],
+          error: result.error,
+          rawContentPreview: result.rawContent || '(无法读取)',
+        },
+        fixSuggestion: '建议从备份恢复该文件，或删除损坏文件让系统重建空数据（将丢失该文件中的所有数据）',
+        canAutoFix: true,
+      }));
+    }
+  }
+  return issues;
 }
 
 function scanOrphanVariables(projects: Project[], variables: Variable[]): HealthIssue[] {
@@ -145,6 +202,66 @@ function scanOrphanComparisons(projects: Project[], comparisons: CompareRecord[]
       }));
     }
   }
+  return issues;
+}
+
+function scanMissingProjects(projects: Project[], variables: Variable[], simulations: SimulationResult[], comparisons: CompareRecord[]): HealthIssue[] {
+  const projectIds = new Set(projects.map(p => p.id));
+  const issues: HealthIssue[] = [];
+
+  const referencedProjectIds = new Map<string, { variables: string[]; simulations: string[]; comparisons: string[] }>();
+
+  for (const v of variables) {
+    if (!projectIds.has(v.projectId)) {
+      if (!referencedProjectIds.has(v.projectId)) {
+        referencedProjectIds.set(v.projectId, { variables: [], simulations: [], comparisons: [] });
+      }
+      referencedProjectIds.get(v.projectId)!.variables.push(v.name);
+    }
+  }
+  for (const s of simulations) {
+    if (!projectIds.has(s.projectId)) {
+      if (!referencedProjectIds.has(s.projectId)) {
+        referencedProjectIds.set(s.projectId, { variables: [], simulations: [], comparisons: [] });
+      }
+      referencedProjectIds.get(s.projectId)!.simulations.push(s.runName);
+    }
+  }
+  for (const c of comparisons) {
+    if (!projectIds.has(c.projectId)) {
+      if (!referencedProjectIds.has(c.projectId)) {
+        referencedProjectIds.set(c.projectId, { variables: [], simulations: [], comparisons: [] });
+      }
+      referencedProjectIds.get(c.projectId)!.comparisons.push(c.name);
+    }
+  }
+
+  for (const [missingId, refs] of referencedProjectIds) {
+    const details: string[] = [];
+    if (refs.variables.length > 0) details.push(`${refs.variables.length} 个孤儿变量`);
+    if (refs.simulations.length > 0) details.push(`${refs.simulations.length} 个孤儿模拟`);
+    if (refs.comparisons.length > 0) details.push(`${refs.comparisons.length} 个孤儿对比`);
+
+    issues.push(createIssue({
+      type: 'missing_project',
+      severity: 'error',
+      title: '缺失项目',
+      description: `项目ID ${missingId.slice(0, 8)}... 被引用但不存在，导致: ${details.join('、')}`,
+      affectedType: 'project',
+      affectedId: missingId,
+      affectedName: `项目 ${missingId.slice(0, 8)}`,
+      preview: {
+        missingProjectId: missingId,
+        orphanVariables: refs.variables,
+        orphanSimulations: refs.simulations,
+        orphanComparisons: refs.comparisons,
+        totalAffected: refs.variables.length + refs.simulations.length + refs.comparisons.length,
+      },
+      fixSuggestion: '清理该缺失项目关联的所有孤儿变量、模拟和对比记录',
+      canAutoFix: true,
+    }));
+  }
+
   return issues;
 }
 
@@ -319,11 +436,17 @@ function scanOversizedFiles(fileSizes: FileSizeInfo[]): HealthIssue[] {
   return issues;
 }
 
-router.get('/scan', (_req: Request, res: Response) => {
-  const projects = projectsStore.getAll();
-  const variables = variablesStore.getAll();
-  const simulations = simulationsStore.getAll();
-  const comparisons = comparisonsStore.getAll();
+function runFullScan(): { result: HealthScanResult; issues: HealthIssue[]; projects: Project[]; variables: Variable[]; simulations: SimulationResult[]; comparisons: CompareRecord[] } {
+  const corruptedIssues = scanCorruptedJson();
+
+  const corruptedTypes = new Set(
+    corruptedIssues.filter(i => i.type === 'corrupted_json').map(i => i.affectedId)
+  );
+
+  const projects: Project[] = corruptedTypes.has('projects') ? [] : projectsStore.getAll();
+  const variables: Variable[] = corruptedTypes.has('variables') ? [] : variablesStore.getAll();
+  const simulations: SimulationResult[] = corruptedTypes.has('simulations') ? [] : simulationsStore.getAll();
+  const comparisons: CompareRecord[] = corruptedTypes.has('comparisons') ? [] : comparisonsStore.getAll();
 
   const dataCounts = {
     projects: projects.length,
@@ -340,6 +463,8 @@ router.get('/scan', (_req: Request, res: Response) => {
   ];
 
   const issues: HealthIssue[] = [
+    ...corruptedIssues,
+    ...scanMissingProjects(projects, variables, simulations, comparisons),
     ...scanOrphanVariables(projects, variables),
     ...scanOrphanSimulations(projects, simulations),
     ...scanOrphanComparisons(projects, comparisons),
@@ -363,6 +488,11 @@ router.get('/scan', (_req: Request, res: Response) => {
     dataCounts,
   };
 
+  return { result, issues, projects, variables, simulations, comparisons };
+}
+
+router.get('/scan', (_req: Request, res: Response) => {
+  const { result } = runFullScan();
   res.json(result);
 });
 
@@ -373,28 +503,7 @@ router.post('/repair', (req: Request, res: Response) => {
     return;
   }
 
-  const scanRes = (() => {
-    const projects = projectsStore.getAll();
-    const variables = variablesStore.getAll();
-    const simulations = simulationsStore.getAll();
-    const comparisons = comparisonsStore.getAll();
-    const fileSizes: FileSizeInfo[] = [
-      getFileSizeInfo('projects', projects.length),
-      getFileSizeInfo('variables', variables.length),
-      getFileSizeInfo('simulations', simulations.length),
-      getFileSizeInfo('comparisons', comparisons.length),
-    ];
-    const issues: HealthIssue[] = [
-      ...scanOrphanVariables(projects, variables),
-      ...scanOrphanSimulations(projects, simulations),
-      ...scanOrphanComparisons(projects, comparisons),
-      ...scanMissingSimulations(simulations, comparisons),
-      ...scanAbnormalValues(variables, simulations),
-      ...scanOversizedFiles(fileSizes),
-    ];
-    return { issues, simulations, comparisons };
-  })();
-
+  const scanRes = runFullScan();
   const issueMap = new Map(scanRes.issues.map(i => [i.id, i]));
   const repairResults: RepairResult['results'] = [];
 
@@ -422,6 +531,30 @@ router.post('/repair', (req: Request, res: Response) => {
       let message = '';
 
       switch (issue.type) {
+        case 'corrupted_json':
+          if (issue.affectedId) {
+            const storeType = issue.affectedId as StoreType;
+            const filePath = path.join(DATA_DIR, FILES[storeType]);
+            if (fs.existsSync(filePath)) {
+              const wrapper = {
+                version: '1.0',
+                lastModified: new Date().toISOString(),
+                data: [] as unknown[],
+              };
+              fs.writeFileSync(filePath, JSON.stringify(wrapper, null, 2), 'utf-8');
+              message = `已重置损坏的 ${FILES[storeType]} 为空数据文件`;
+            }
+          }
+          break;
+        case 'missing_project':
+          if (issue.affectedId) {
+            const missingProjectId = issue.affectedId;
+            const delVars = variablesStore.deleteMany(v => v.projectId === missingProjectId);
+            const delSims = simulationsStore.deleteMany(s => s.projectId === missingProjectId);
+            const delComps = comparisonsStore.deleteMany(c => c.projectId === missingProjectId);
+            message = `已清理缺失项目关联的 ${delVars} 个变量、${delSims} 个模拟、${delComps} 个对比`;
+          }
+          break;
         case 'orphan_variable':
           if (issue.affectedId) {
             variablesStore.delete(issue.affectedId);
@@ -444,7 +577,8 @@ router.post('/repair', (req: Request, res: Response) => {
           if (issue.affectedId) {
             const compare = comparisonsStore.getById(issue.affectedId);
             if (compare) {
-              const simIds = new Set(scanRes.simulations.map(s => s.id));
+              const currentSims = simulationsStore.getAll();
+              const simIds = new Set(currentSims.map(s => s.id));
               const validIds = compare.simulationIds.filter(id => simIds.has(id));
               comparisonsStore.update(issue.affectedId, { simulationIds: validIds });
               message = '已清理对比记录中缺失的模拟引用';
